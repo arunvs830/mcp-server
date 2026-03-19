@@ -25,14 +25,16 @@ RUN mkdir -p /data && chown iris:iris /data
 
 USER iris
 
+# IRIS_TRANSPORT=http causes the dashboard and MCP transport to share port 3000.
+# Set IRIS_API_KEY at runtime for production deployments.
 ENV IRIS_TRANSPORT=http \
     IRIS_PORT=3000 \
     IRIS_DB_PATH=/data/iris.db \
     IRIS_DASHBOARD=true \
-    IRIS_DASHBOARD_PORT=3000
+    IRIS_LOG_LEVEL=info
 
 EXPOSE 3000
 
 VOLUME ["/data"]
 
-CMD ["node", "dist/index.js", "--transport", "http", "--port", "3000", "--dashboard"]
+CMD ["node", "dist/index.js"]

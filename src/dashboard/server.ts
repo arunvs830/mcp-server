@@ -1,4 +1,5 @@
 import express from 'express';
+import type { Router, Application } from 'express';
 import type { Server } from 'node:http';
 import helmet from 'helmet';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +19,43 @@ import { registerFilterRoutes } from './routes/filters.js';
 import { registerHealthRoutes } from './routes/health.js';
 
 export interface DashboardServer {
-  app: express.Application;
+  app: Application;
   start(): Server;
+}
+
+/**
+ * Creates an Express Router with all dashboard API routes. Can be mounted onto
+ * any existing Express app (e.g., the MCP HTTP transport app) so that both
+ * the MCP transport and the dashboard share a single port.
+ */
+export function createDashboardRouter(storage: IStorageAdapter, config: IrisConfig): Router {
+  const router = express.Router();
+  router.use(createApiRateLimiter(config));
+  registerTraceRoutes(router, storage);
+  registerSummaryRoutes(router, storage);
+  registerEvaluationRoutes(router, storage);
+  registerFilterRoutes(router, storage);
+  registerHealthRoutes(router, storage);
+  return router;
+}
+
+/**
+ * Mounts static dashboard files onto an Express app if they have been built.
+ * Returns true if the static files were found and mounted.
+ */
+export function mountDashboardStatic(app: Application, config: IrisConfig): boolean {
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  const staticDir = join(currentDir, '..', '..', 'dist', 'dashboard');
+  if (existsSync(staticDir)) {
+    app.use(express.static(staticDir));
+    // SPA fallback: rate-limited to prevent file-system abuse
+    const limiter = createApiRateLimiter(config);
+    app.get('/{*path}', limiter, (_req, res) => {
+      res.sendFile(join(staticDir, 'index.html'));
+    });
+    return true;
+  }
+  return false;
 }
 
 export function createDashboardServer(
@@ -51,24 +87,10 @@ export function createDashboardServer(
   app.use(createAuthMiddleware(config));
 
   // API routes with rate limiting
-  const router = express.Router();
-  router.use(createApiRateLimiter(config));
-  registerTraceRoutes(router, storage);
-  registerSummaryRoutes(router, storage);
-  registerEvaluationRoutes(router, storage);
-  registerFilterRoutes(router, storage);
-  registerHealthRoutes(router, storage);
-  app.use('/api/v1', router);
+  app.use('/api/v1', createDashboardRouter(storage, config));
 
   // Serve static dashboard files if built
-  const currentDir = dirname(fileURLToPath(import.meta.url));
-  const staticDir = join(currentDir, '..', '..', 'dist', 'dashboard');
-  if (existsSync(staticDir)) {
-    app.use(express.static(staticDir));
-    app.get('/{*path}', (_req, res) => {
-      res.sendFile(join(staticDir, 'index.html'));
-    });
-  }
+  mountDashboardStatic(app, config);
 
   // Error handler (must be last)
   app.use(createErrorHandler(logger));

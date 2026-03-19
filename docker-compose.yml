@@ -11,6 +11,8 @@ services:
       - IRIS_DB_PATH=/data/iris.db
       - IRIS_DASHBOARD=true
       - IRIS_LOG_LEVEL=info
+      # Set IRIS_API_KEY to protect the server in production:
+      # - IRIS_API_KEY=your-secret-key
     restart: unless-stopped
 
 volumes:

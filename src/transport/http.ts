@@ -4,10 +4,13 @@ import helmet from 'helmet';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { IrisConfig } from '../types/config.js';
+import type { IStorageAdapter } from '../types/query.js';
 import type { Logger } from '../utils/logger.js';
 import { createAuthMiddleware } from '../middleware/auth.js';
+import { createCorsMiddleware } from '../middleware/cors.js';
 import { createErrorHandler } from '../middleware/error-handler.js';
 import { createMcpRateLimiter } from '../middleware/rate-limit.js';
+import { createDashboardRouter, mountDashboardStatic } from '../dashboard/server.js';
 
 export interface HttpTransportResult {
   transport: StreamableHTTPServerTransport;
@@ -18,14 +21,33 @@ export async function createHttpTransport(
   mcpServer: McpServer,
   config: IrisConfig,
   logger: Logger,
+  storage?: IStorageAdapter,
 ): Promise<HttpTransportResult> {
   const app = express();
+  const dashboardEnabled = config.dashboard.enabled && storage != null;
 
-  // Security headers (no CSP — API only, no HTML)
-  app.use(helmet({ contentSecurityPolicy: false }));
+  // Security headers — use explicit CSP when the dashboard UI is also served,
+  // otherwise rely on Helmet's secure defaults
+  app.use(helmet(
+    dashboardEnabled
+      ? {
+          contentSecurityPolicy: {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              connectSrc: ["'self'"],
+            },
+          },
+        }
+      : {},
+  ));
 
   // Body parser with size limit
   app.use(express.json({ limit: config.security.requestSizeLimit }));
+
+  // CORS
+  app.use(createCorsMiddleware(config.security.allowedOrigins));
 
   // Health endpoint (no auth, no rate limit)
   app.get('/health', (_req, res) => {
@@ -51,6 +73,13 @@ export async function createHttpTransport(
   app.delete('/mcp', mcpLimiter, async (req, res) => {
     await transport.handleRequest(req, res);
   });
+
+  // When dashboard is enabled, mount the dashboard API and static files on the
+  // same Express app so that a single port serves everything.
+  if (dashboardEnabled) {
+    app.use('/api/v1', createDashboardRouter(storage, config));
+    mountDashboardStatic(app, config);
+  }
 
   // Error handler (must be last)
   app.use(createErrorHandler(logger));

@@ -66,19 +66,25 @@ async function main(): Promise<void> {
   const httpServers: Server[] = [];
 
   if (config.transport.type === 'http') {
-    const { transport, httpServer } = await createHttpTransport(mcpServer, config, logger);
+    const { transport, httpServer } = await createHttpTransport(mcpServer, config, logger, storage);
     httpServers.push(httpServer);
     await mcpServer.connect(transport);
     const addr = httpServer.address();
     const portStr = typeof addr === 'object' && addr ? addr.port : config.transport.port;
     logger.info(`HTTP transport listening on ${config.transport.host}:${portStr}`);
+
+    if (config.dashboard.enabled) {
+      logger.info(`Dashboard available at http://localhost:${portStr}`);
+    }
   } else {
     const transport = createStdioTransport();
     await mcpServer.connect(transport);
     logger.info('Stdio transport connected');
   }
 
-  if (config.dashboard.enabled || config.transport.type === 'http') {
+  // When using stdio transport, start a dedicated dashboard server on its own port.
+  // When using HTTP transport the dashboard is served from the MCP HTTP server above.
+  if (config.dashboard.enabled && config.transport.type !== 'http') {
     const dashboardServer = createDashboardServer(storage, config, logger);
     const server = dashboardServer.start();
     httpServers.push(server);
